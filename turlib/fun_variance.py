@@ -85,6 +85,22 @@ Results have been validated against OOMAO outputs.
 """
 
 
+def agregate2alternate(G):
+    """
+    inverse operation of alternate2agregate
+    """
+    a0l, a1l = G.shape
+    Ga = np.zeros((a0l, a1l))
+
+    nS = int(a0l / 2)
+
+    for ii in range(nS):
+        Ga[2 * ii, :] = G[ii, :]
+        Ga[2 * ii + 1, :] = G[ii + nS, :]
+
+    return Ga
+
+
 def new_gamma(a, b):
     """
     Function imported from OOMAO

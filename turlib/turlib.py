@@ -8,17 +8,17 @@ Feel free to use and expand this library to your own uses.
 
 import numpy as np
 from scipy.optimize import leastsq
-from turlib.fun_variance import nm, nz_variance, nz_covariance
+from turlib.fun_variance import nm, nz_variance, nz_covariance, agregate2alternate
 import aotpy
 import pandas as pd
 import math
 import warnings
+from astropy.io import fits
 
 
-def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = False, wl=500 * 10 ** -9,
-                 simulated_matrix_response=0.44, gradient_matrix_scale=0.22918311805232927,
+def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = False,
                  h_rad=4, l_rad=2, n_max_modes=15, diameter_tel=1.8,
-                 conversion_modes_to_rad=1e-6 / (500 * 10 ** -9) * 2 * np.pi):
+                 conversion_modes_to_rad=1e-6 / (500 * 10 ** -9) * 2 * np.pi, estimate_noise=False):
     """
     returns vector for the application on turbulence estimation methods of turlib package
     for any aotpy system - defaults to NAOMI configuration
@@ -37,17 +37,7 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
         grabs loop instance from aotpy system file, by default its 0 for NAOMI use case
 
     path_g_mat_sim:
-        path to the generated simulated G matrix in OOPAO
-        available for NAOMI at turlib GHub ()
-
-    simulated_matrix_response:
-        system response of the gradient matrix (leave as 1 if the matrix is already scaled)
-
-    wl:
-        wavelength for the estimation - assumed 500 nm
-
-    gradient_matrix_scale:
-        Removes scale of the artificial matrix (leave as 1 if the matrix is correctly scaled)
+        path to the generated simulated G matrix
 
     h_rad:
         Highest radial order in the fit
@@ -63,6 +53,9 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
 
     diameter_tel:
         Diameter of telescope in meters (use only if it isnt defined by aotpy)
+
+    estimate_noise:
+        Estimate noise through autocorrelation - if True will estimate
 
     Returns
     -------
@@ -89,8 +82,14 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
     control_matrix: np.array = loop.measurements_to_modes.data
 
     # Simulated matrix import:
-    gradient_matrix_rescaled = import_generated_matrix(path_g_mat_sim, wl,
-                                                       simulated_matrix_response, gradient_matrix_scale)
+
+    gradient_matrix = fits.getdata(path_g_mat_sim)
+    g_matrix_ordered = agregate2alternate(gradient_matrix)  # adopting SPARTA convention of alternated x and y slopes
+
+    # rescaling matrix
+
+    g_matrix_ordered[:, 0] = 0.0
+    g_matrix_ordered = 0.5 / 0.375 * g_matrix_ordered
 
     if loop.delay is None or loop.framerate is None:
         delay = 2
@@ -119,7 +118,7 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
     else:
         diameter = diameter_tel
 
-    m = gradient_matrix_rescaled.shape[1]
+    m = g_matrix_ordered.shape[1]
     bi = np.zeros([j, reformated_size])
     bi[1:] = pseudo_open_modes
 
@@ -137,24 +136,112 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
     for iRadOrd in range(f_rad_ords.size):
         f_modes = np.append(f_modes, modes_of_radial_order(f_rad_ords[iRadOrd]))
 
-    reconstructor_fitted = gradient_matrix_rescaled[:, 0:j]
+    reconstructor_fitted = g_matrix_ordered[:, 0:j]
     inv_reconstructor_fitted = np.linalg.pinv(reconstructor_fitted)  # unrotated reconstructor
-    reconstructor_remaining = gradient_matrix_rescaled[:, j:m + 1]
+    reconstructor_remaining = g_matrix_ordered[:, j:m + 1]
     c = np.matmul(inv_reconstructor_fitted, reconstructor_remaining)  # cross-coupling matrix
 
     # estimate noise
-    fusco_noise: np.array = noise_variance(bi)
+    if estimate_noise:
+        fusco_noise: np.array = noise_variance(bi)
+
+    if not estimate_noise:
+        fusco_noise: np.array = np.empty(len(bi2))
 
     if dimm_data:
         if system.atmosphere_params[0].fwhm[0] is not None and system.main_telescope.elevation is not None:
-            return [diameter, f_modes, bi2, fusco_noise, j, m, c], \
+            return [diameter, f_modes, bi2, fusco_noise, j, m, c, reconstructor_fitted], \
                    [system.atmosphere_params[0].fwhm[0], system.main_telescope.elevation]
         else:
-            return [diameter, f_modes, bi2, fusco_noise, j, m, c], [0, 0]
+            return [diameter, f_modes, bi2, fusco_noise, j, m, c, reconstructor_fitted], [0, 0]
             warnings.warn('Either seeing or elevation werent defined - returns zeros array [0,0]')
 
     if not dimm_data:
-        return [diameter, f_modes, bi2, fusco_noise, j, m, c]
+        return [diameter, f_modes, bi2, fusco_noise, j, m, c, reconstructor_fitted]
+
+
+def reader_modes(path: str, loop_instance=0, diameter_tel=1.8, n_max_modes=15,
+                 conversion_modes_to_rad=1e-6 / (500 * 10 ** -9) * 2 * np.pi):
+    """
+    returns vector for the application on turbulence estimation methods of turlib package
+    for any aotpy system - defaults to NAOMI configuration
+
+    Parameters
+    ----------
+    path:
+        path to the system fits file - following aotpy translator conventions
+        https://github.com/kYwzor/aotpy
+
+    loop_instance:
+        grabs loop instance from aotpy system file, by default its 0 for NAOMI use case
+
+    conversion_modes_to_rad:
+        Conversion factor from pseudo mode units to radians (leave as 1 if already scaled)
+
+    diameter_tel:
+        Diameter of telescope in meters (use only if it isnt defined by aotpy)
+
+    n_max_modes:
+        Number of modes reconstructed from the telemetry
+
+    Returns
+    -------
+
+    turlib vector - vector with:
+
+         1) Diameter of telescope
+         2) Modal variances
+         3) Modal coefficients
+
+    """
+
+    system = aotpy.AOSystem.read_from_file(path)  # AOSystem
+
+    loop = system.loops[loop_instance]
+    if not isinstance(loop, aotpy.ControlLoop):
+        raise ValueError
+
+    sensor: aotpy.WavefrontSensor = loop.input_sensor
+
+    positions = loop.commands.data
+    gradients = sensor.measurements.data
+
+    dm2m_matrix: np.array = loop.commands_to_modes.data
+    control_matrix: np.array = loop.measurements_to_modes.data
+
+    if loop.delay is None or loop.framerate is None:
+        delay = 2
+        warnings.warn('Either loop delay or framerate isnt correctly defined, assumed frame delay == 2')
+    # adding frame delay to the shack-hartmann slopes (defaults to 2 if delay isn't present)
+    else:
+        delay = math.ceil(loop.framerate * loop.delay)
+
+    data_size = len(positions)
+    reformated_size = data_size - math.ceil(delay)
+    interp_positions = positions[delay::1, :]
+    slopes = gradients[0:-delay:1, :, :]
+    j = n_max_modes
+    residual_m = np.matmul(control_matrix[:, 0, :], slopes[:, 0, :].T) + np.matmul(control_matrix[:, 1, :],
+                                                                                   slopes[:, 1, :].T)
+
+    # Projection of commands on Slopes in arcsec
+
+    dm_modes = np.matmul(dm2m_matrix, interp_positions.T)
+    pseudo_open_modes_um = (residual_m + dm_modes)
+    pseudo_open_modes = pseudo_open_modes_um * conversion_modes_to_rad
+
+    if system.main_telescope.inscribed_diameter is not None:
+        diameter = system.main_telescope.inscribed_diameter
+    else:
+        diameter = diameter_tel
+
+    bi = np.zeros([j, reformated_size])
+    bi[1:] = pseudo_open_modes
+
+    # reconstructed variances
+    bi2 = np.var(bi, 1, ddof=1)  # ddof makes the denominator N-1, useful for the correct estimation of the variance.
+
+    return [diameter, bi2, bi]
 
 
 def import_generated_matrix(path_g_mat_sim, wl, response=0.44, gradient_matrix_scale=0.22918311805232927,
@@ -411,7 +498,8 @@ def zernike_variance(d, p, x):
 """functions for iterative estimation of the turbulence parameters"""
 
 
-def iterative_estimator(d, modes, ai2, noise_estimate, n_rec_modes, m, c_mat, n_iter=5, full_vector=False):
+def iterative_estimator(d, modes, ai2, noise_estimate, n_rec_modes, m, c_mat, n_iter=5, hro=4, lro=2,
+                        full_vector=False):
     """
     Function that estimates the integrated turbulence parameters (r0, L0) from pseudo-open loop variances in a Zernike
     base.
@@ -434,6 +522,10 @@ def iterative_estimator(d, modes, ai2, noise_estimate, n_rec_modes, m, c_mat, n_
         Cross-talk matrix - specific to your system.
     n_iter:
         Number of iterations of the algorithm
+    lro:
+        Lowest radial order of fit
+    hro:
+        Highest radial order of fit
     full_vector:
         Full vector permits saving all turbulence parameter estimates
 
@@ -463,10 +555,13 @@ def iterative_estimator(d, modes, ai2, noise_estimate, n_rec_modes, m, c_mat, n_
 
     for vv in range(n_iter):
         # Calculation of the remaining error contributions
+
         aiaj_0 = nz_covariance(r0, l0, d, m)
+
         si2_cc_1 = cross_correction(n_rec_modes, m + n_rec_modes, c_mat, aiaj_0)
 
-        tp = TurbulenceEstimator(d, modes, ai2, si2_nn=noise_estimate, si2_cc=si2_cc_1)
+        tp = TurbulenceEstimator(d, modes, ai2, si2_nn=noise_estimate, si2_cc=si2_cc_1,
+                                 h_rad_ord=hro, l_rad_ord=lro)
 
         r0 = tp.tp[0]
         l0 = tp.tp[1]
@@ -590,6 +685,8 @@ class TurbulenceEstimator:
     def __init__(self, d, modes, ai2, si2_nn, si2_cc=None, h_rad_ord=4, l_rad_ord=2, modes_excluded=np.array([])):
 
         self.D = d
+        self.h_rad_ord = h_rad_ord
+        self.l_rad_ord = l_rad_ord
         self.modes = modes  # (numbering assumes index 1 as piston)
         self.modes_excluded = modes_excluded
         for ime in range(modes_excluded.size):
@@ -625,10 +722,10 @@ class TurbulenceEstimator:
         # weight vector for the chi square
 
         # Obtain the standard deviations within radial orders
-        self.std_v = std_vector(h_rad_ord, l_rad_ord, self.fitted_ai2)
+        self.std_v = std_vector(self.h_rad_ord, self.l_rad_ord, self.fitted_ai2)
 
         # Project the standard deviation to all Noll modes of the order
-        self.std = std_projection(h_rad_ord, l_rad_ord, self.std_v)
+        self.std = std_projection(self.h_rad_ord, self.l_rad_ord, self.std_v)
 
         # fit function - theoretical zernike Variances as a function of turbulence parameters, r0 and L0
         def af1(x, p):

@@ -18,7 +18,7 @@ from astropy.io import fits
 
 def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = False,
                  h_rad=4, l_rad=2, n_max_modes=15, diameter_tel=1.8,
-                 conversion_modes_to_rad=1e-6 / (500 * 10 ** -9) * 2 * np.pi, estimate_noise=False):
+                 conversion_modes_to_rad=1e-6 / (500 * 10 ** -9) * 2 * np.pi, estimate_noise=False, naomi=True):
     """
     returns vector for the application on turbulence estimation methods of turlib package
     for any aotpy system - defaults to NAOMI configuration
@@ -57,6 +57,9 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
     estimate_noise:
         Estimate noise through autocorrelation - if True will estimate
 
+    naomi:
+        Special flag for NAOMI integration with SPARTA convention of slope ordering
+
     Returns
     -------
     if dimm_data is False - returns turlib_vector
@@ -84,12 +87,17 @@ def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = F
     # Simulated matrix import:
 
     gradient_matrix = fits.getdata(path_g_mat_sim)
-    g_matrix_ordered = agregate2alternate(gradient_matrix)  # adopting SPARTA convention of alternated x and y slopes
+    if naomi:
+        # adopting SPARTA convention of alternated x and y slopes
+        g_matrix_ordered = agregate2alternate(gradient_matrix)
 
-    # rescaling matrix
+        # rescaling matrix
 
-    g_matrix_ordered[:, 0] = 0.0
-    g_matrix_ordered = 0.5 / 0.375 * g_matrix_ordered
+        g_matrix_ordered[:, 0] = 0.0
+        g_matrix_ordered = 0.5 / 0.375 * g_matrix_ordered
+
+    if not naomi:
+        g_matrix_ordered = gradient_matrix
 
     if loop.delay is None or loop.framerate is None:
         delay = 2

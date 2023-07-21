@@ -87,7 +87,20 @@ Results have been validated against OOMAO outputs.
 
 def agregate2alternate(G):
     """
-    inverse operation of alternate2agregate
+
+    Changes slope ordering to match SPARTA standard from conventional ordering for NAOMI grandient matrix.
+
+    Parameters
+    ----------
+    G:
+        Gradient matrix generated from OOPAO simulation.
+
+    Returns
+    -------
+    ordered_G:
+        Ordered Gradient matrix according to SPARTA convention.
+
+
     """
     a0l, a1l = G.shape
     Ga = np.zeros((a0l, a1l))

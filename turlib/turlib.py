@@ -16,6 +16,7 @@ import warnings
 from astropy.io import fits
 
 
+
 def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = False,
                  h_rad=4, l_rad=2, n_max_modes=15, diameter_tel=1.8,
                  conversion_modes_to_rad=1e-6 / (500 * 10 ** -9) * 2 * np.pi, estimate_noise=False, naomi=True):
@@ -740,6 +741,128 @@ class TurbulenceEstimator:
         # fit function - theoretical zernike Variances as a function of turbulence parameters, r0 and L0
         def af1(x, p):
             return zernike_variance(self.D, p, x)
+
+        '''
+
+        Here we define the fitting curve to be weighed by the standard deviation of the radial modes
+        Serves as a more natural way of performing the least squares algorithm, avoiding the logarithm approach
+
+        We need to recalculate the deviation every time we calculate the new fitted_ai2. As the points shift 
+        in place.
+
+        '''
+
+        def af2(p, x, y):
+            return (af1(x, p) - y) / self.std
+
+        '''
+        af2 uses 2 things;
+
+        calculation of variances from current estimate of r0 and L0 and removes noise from it - Artificial
+
+        subtracts the current fitted variances - Real
+
+        Results in a residual of the model vs real data.
+        '''
+
+        self.fit = leastsq(af2, self.p0, args=(self.modes, self.fitted_ai2), full_output=True)
+
+        self.tp = self.fit[0]
+
+
+class GNoiseTurbulenceEstimator:
+    """
+    Turbulence_Estimator: Turbulence Parameters estimation - class to estimate
+    r0 and L0. The Zernike coefficient (ZC) variances are fitted by the theoretical
+    von Karman ZC variances.
+
+    Parameters
+    ----------
+    d:
+        telescope diameter
+    modes:
+        vector with Noll modes to use in the fit
+    modes_excluded:
+        Particular Noll modes to be excluded from the fit
+    ai2:
+        vector with ZC variances
+    si2_nn:
+        vector with ZC noise variances
+    si2_cc:
+        vector with cross-coupling corrections to ZC variances
+    l_rad_ord:
+        the lowest radial order included in the fit
+    h_rad_ord:
+        the highest radial order included in the fit
+
+    Returns
+    -------
+    fit:
+        scipy.optimize.leastsq output
+    tp:
+        vector with parameter estimates
+    fitted_ai2:
+        fitted variances
+    fitted_si2_nn:
+        noise variances of fitted modes
+    fitted_si2_cc:
+        cross-coupling corrections for the fitted modes
+    fitted_nn:
+        fitted modes radial order
+    fitted_mm:
+        fitted modes azimuthal order
+    std_v:
+        standard deviations within radial orders
+    std:
+        projected standard deviation to all Noll modes of the order
+    """
+
+    def __init__(self, d, modes, ai2, Hp, si2_cc=None, h_rad_ord=4, l_rad_ord=2, modes_excluded=np.array([])):
+
+        self.D = d
+        self.h_rad_ord = h_rad_ord
+        self.l_rad_ord = l_rad_ord
+        self.modes = modes  # (numbering assumes index 1 as piston)
+        self.modes_excluded = modes_excluded
+        for ime in range(modes_excluded.size):
+            self.modes = self.modes[self.modes != self.modes_excluded[ime]]
+
+        self.fitted_ai2 = ai2[[m - 1 for m in self.modes]]
+        self.fitted_si2_cc = si2_cc
+
+        self.fitted_nn = [nm(m)[0] for m in self.modes]
+        self.fitted_mm = [nm(m)[1] for m in self.modes]
+
+        # removes contribution of estimated remaining noise
+        if self.fitted_si2_cc is not None:
+            self.fitted_si2_cc = si2_cc[[m - 1 for m in self.modes]]
+            self.fitted_ai2 = self.fitted_ai2 - self.fitted_si2_cc
+
+        '''
+
+        From here we remove the first version of the of the noise estimate.
+
+        '''
+
+        # Parameters initial guess - we randomize the positions in order not to induce bias in the fitting
+        # Recommended small initial parameters - from the chi squared map of the algorithm for an on-sky sample
+
+        self.p0 = np.array([.01 + np.random.rand() * .01, np.random.random() * 4 + 1, 0.0])
+
+        # Estimate noise as global parameter
+        self.fitted_diHtH = np.diagonal((np.matmul(np.transpose(Hp), Hp)))[[m - 1 for m in self.modes]]
+
+        # weight vector for the chi square
+
+        # Obtain the standard deviations within radial orders
+        self.std_v = std_vector(self.h_rad_ord, self.l_rad_ord, self.fitted_ai2)
+
+        # Project the standard deviation to all Noll modes of the order
+        self.std = std_projection(self.h_rad_ord, self.l_rad_ord, self.std_v)
+
+        # fit function - theoretical zernike Variances as a function of turbulence parameters, r0 and L0
+        def af1(x, p):
+            return zernike_variance(self.D, p, x) + p[2]*self.fitted_diHtH
 
         '''
 

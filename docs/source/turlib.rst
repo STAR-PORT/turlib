@@ -15,7 +15,7 @@ turlib.fun\_variance module
 turlib.turlib module
 --------------------
 
-.. automodule:: turlib.turlib
+.. automodule:: turlib.estimation_methods
    :members:
    :undoc-members:
    :show-inheritance:

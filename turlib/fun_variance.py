@@ -1,3 +1,8 @@
+"""
+Functions relating to processing of telemetry time series and the calculation of theoretical co-variances of
+Zernike polynomials
+"""
+
 import numpy as np
 from scipy.special import gamma
 

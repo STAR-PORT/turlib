@@ -1,20 +1,24 @@
 """
-Welcome to the TurLib - Turbulence Library for the estimation of integral turbulence parameters from AO telemetry.
+This module holds the estimation classes that follow the specification of
+                        Andrade+2019(doi:10.1093/mnras/sty3181) and Morujao+2023(TBD).
 
-Author: Nuno Morujão & Paulo Andrade
+At the same time it holds reader functions for the aotpy package developed by Gomes+2022
+                                                        (https://aotpy.readthedocs.io/en/latest/)
 
-Feel free to use and expand this library to your own uses.
 """
 
-import numpy as np
-from scipy.optimize import leastsq
-from turlib.fun_variance import nm, nz_variance, nz_covariance, agregate2alternate
-import aotpy
-import pandas as pd
+# TODO: move readers to diff folder
+
 import math
 import warnings
-from astropy.io import fits
 
+import aotpy
+import numpy as np
+import pandas as pd
+from astropy.io import fits
+from scipy.optimize import leastsq
+
+from turlib.fun_variance import nm, nz_variance, nz_covariance, agregate2alternate
 
 
 def reader_aotpy(path: str, path_g_mat_sim, loop_instance=0, dimm_data: bool = False,

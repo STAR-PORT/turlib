@@ -12,7 +12,7 @@ turlib.fun\_variance module
    :undoc-members:
    :show-inheritance:
 
-turlib.turlib module
+turlib.estimation\_methods module
 --------------------
 
 .. automodule:: turlib.estimation_methods

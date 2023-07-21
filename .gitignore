@@ -133,3 +133,10 @@ fabric.properties
 # Add files
 
 Non_Git/
+.idea/
+
+DATA_ART_NEW/
+DATA_LOGGER-022348/
+DATA_LOGGER-232225/
+HTML/
+Notebook_research.ipynb
